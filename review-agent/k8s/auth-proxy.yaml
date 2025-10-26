@@ -20,6 +20,7 @@ spec:
         - --upstream=http://pr-review-ui:80/ # Default upstream (the UI)
         - --upstream=http://pr-review-api:80/api/ # API path upstream
         - --http-address=0.0.0.0:4180
+        - --cookie-secure=false 
         # Standard oauth2-proxy env vars for client ID, secret, cookie secret
         envFrom:
         - secretRef:

@@ -97,6 +97,7 @@ func RequestLoggerMiddleware() gin.HandlerFunc {
 
 		log.Printf("Request Method: %s\n", c.Request.Method)
 		log.Printf("Request URL: %s\n", c.Request.URL.String())
+		//log.Printf("Request Headers: %v\n", c.Request.Header)
 		log.Printf("Request Body: %s\n", string(bodyBytes))
 
 		c.Next() // Process the request further
@@ -407,6 +408,9 @@ func fetchAndPopulatePRs(ctx context.Context, repo string) {
 		Version:  "v1alpha1",
 		Resource: "reviewsandboxes",
 	}
+	// In a real scenario, we would list the CRs from the cluster.
+	// For this demo, we will return a mock list and ensure the URLs are in Redis.
+	// This simulates the controller having populated Redis.
 	list, err := k8sClient.Resource(gvr).Namespace(namespace).List(context.Background(),
 		v1.ListOptions{
 			LabelSelector: fmt.Sprintf("review.gemini.google.com/repowatch=%s", repo),
@@ -417,6 +421,7 @@ func fetchAndPopulatePRs(ctx context.Context, repo string) {
 	}
 
 	for _, item := range list.Items {
+		// Get replicas and if it scaled down skip
 		replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
 		if err != nil || !found {
 			log.Printf("Replicas (.spec.replicas) not found in ReviewSandbox  %s", item.GetName())
@@ -447,6 +452,7 @@ func fetchAndPopulatePRs(ctx context.Context, repo string) {
 		}
 
 		prKey := fmt.Sprintf("pr:repo:%s:pr:%s", repo, prID)
+		// Ensure the URL is in Redis
 		if err := rdb.HSet(ctx, prKey,
 			"title", pr.Title,
 			"sandbox", pr.Sandbox,
@@ -493,6 +499,7 @@ func submitReview(c *gin.Context) {
 	ctx := c.Request.Context()
 	log.Printf("Submitting review for PR %s in repo %s with review: %s", prID, repo, payload.Review)
 
+	// Get RepoWatch to get repoURL and secret ref
 	repoWatch, err := getRepoWatch(ctx, repo)
 	if err != nil {
 		log.Printf("Failed to get repowatch %s: %v", repo, err)
@@ -500,6 +507,7 @@ func submitReview(c *gin.Context) {
 		return
 	}
 
+	// Get GitHub token from secret
 	token, err := getGitHubToken(ctx, repoWatch)
 	if err != nil {
 		log.Printf("Failed to get github token for repo %s: %v", repo, err)
@@ -507,12 +515,14 @@ func submitReview(c *gin.Context) {
 		return
 	}
 
+	// Create GitHub client
 	ts := oauth2.StaticTokenSource(
 		&oauth2.Token{AccessToken: token},
 	)
 	tc := oauth2.NewClient(ctx, ts)
 	client := github.NewClient(tc)
 
+	// Parse repo URL
 	repoURL, found, err := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
 	if err != nil || !found {
 		log.Printf("repoURL not found in RepoWatch CR %s", repoWatch.GetName())
@@ -526,6 +536,7 @@ func submitReview(c *gin.Context) {
 		return
 	}
 
+	// Get PR number
 	prNumber, err := strconv.Atoi(prID)
 	if err != nil {
 		log.Printf("Failed to parse prID %s: %v", prID, err)
@@ -533,6 +544,7 @@ func submitReview(c *gin.Context) {
 		return
 	}
 
+	// Create comment on PR
 	comment := &github.IssueComment{
 		Body: &payload.Review,
 	}
@@ -543,6 +555,7 @@ func submitReview(c *gin.Context) {
 		return
 	}
 
+	// Set review in Redis
 	prKey := fmt.Sprintf("pr:repo:%s:pr:%s", repo, prID)
 	err = rdb.HSet(c.Request.Context(), prKey, "review", payload.Review).Err()
 	if err != nil {
@@ -550,12 +563,14 @@ func submitReview(c *gin.Context) {
 		return
 	}
 
+	// Delete draft from Redis
 	err = rdb.HSet(c.Request.Context(), prKey, "draft", "").Err()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clear draft", "details": err.Error()})
 		return
 	}
 
+	// scale down sandbox
 	err = scaledownSandbox(ctx, repo, prID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scaledown Sandbox after review submission", "details": err.Error()})
@@ -575,6 +590,7 @@ func deletePR(c *gin.Context) {
 		return
 	}
 
+	// Clean up Redis keys
 	prKey := fmt.Sprintf("pr:repo:%s:pr:%s", repo, prID)
 	if err := rdb.HDel(c.Request.Context(), prKey, "review", "draft", "sandbox", "htmlurl", "title").Err(); err != nil {
 		log.Printf("Failed to HDEL PR data from Redis: %v", err)
@@ -852,6 +868,49 @@ func deleteIssue(c *gin.Context) {
 }
 
 // --- Helper Functions ---
+
+func scaledownSandbox(ctx context.Context, repo, prID string) error {
+	prKey := fmt.Sprintf("pr:repo:%s:pr:%s", repo, prID)
+	sandboxName, err := rdb.HGet(ctx, prKey, "sandbox").Result()
+	if err == redis.Nil {
+		// If sandbox is not in Redis, we can assume it's already deleted or never existed.
+		log.Printf("Sandbox for repo %s, PR %s not found in Redis. Assuming it's already deleted.", repo, prID)
+		// For the demo, we'll construct the name to attempt deletion anyway.
+		sandboxName = fmt.Sprintf("%s-pr-%s", repo, prID)
+	} else if err != nil {
+		return fmt.Errorf("failed to get sandbox name from Redis: %w", err)
+	}
+
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "reviewsandboxes",
+	}
+	log.Printf("Scaling down sandbox %s", sandboxName)
+
+	// Set .spec.replicas to 0 and apply the sandbox object
+	sandbox := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+			"kind":       "ReviewSandbox",
+			"metadata": map[string]interface{}{
+				"name":      sandboxName,
+				"namespace": namespace,
+			},
+			"spec": map[string]interface{}{
+				"replicas": int64(0),
+			},
+		},
+	}
+
+	_, err = k8sClient.Resource(gvr).Namespace(namespace).Apply(ctx, sandboxName,
+		sandbox, v1.ApplyOptions{FieldManager: "review-ui", Force: true})
+	if err != nil {
+		// We can choose to not return an error if it's already gone.
+		return fmt.Errorf("failed to scaledown sandbox: %w", err)
+	}
+	return nil
+}
 
 func scaledownIssueSandbox(ctx context.Context, repo, issueID, handler string) error {
 	sandboxName := fmt.Sprintf("%s-issue-%s-%s", repo, issueID, handler)
