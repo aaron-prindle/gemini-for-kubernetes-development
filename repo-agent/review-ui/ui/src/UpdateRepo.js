@@ -17,6 +17,14 @@ function UpdateRepo({ repo, onCancel, onRepoUpdated, onRepoDeleted }) {
     const [instructionsError, setInstructionsError] = useState('');
     const [isInstructionsLoading, setIsInstructionsLoading] = useState(false);
 
+    // Filters state
+    const [filters, setFilters] = useState({
+        preferAssignedToSelf: false,
+        labels: [], // Array of arrays of strings
+        pullRequests: '',
+        excludePullRequests: ''
+    });
+
     useEffect(() => {
         setIsLoading(true);
         fetch(`/api/repos/${repo.name}/yaml`)
@@ -65,13 +73,87 @@ function UpdateRepo({ repo, onCancel, onRepoUpdated, onRepoDeleted }) {
         }
     }, [activeTab, fetchInstructions]);
 
+    const handleTabChange = (newTab) => {
+        if (activeTab === 'config' && newTab === 'filters') {
+            try {
+                const parsed = yaml.load(yamlContent);
+                // yamlContent represents the SPEC, so review is at top level
+                const review = parsed?.review || {};
+                
+                let labels = review.labels;
+                if (!Array.isArray(labels)) {
+                    labels = [];
+                }
+                // Ensure it's array of arrays
+                labels = labels.map(l => Array.isArray(l) ? l : []);
+
+                setFilters({
+                    preferAssignedToSelf: review.preferAssignedToSelf || false,
+                    labels: labels,
+                    pullRequests: (Array.isArray(review.pullRequests) ? review.pullRequests : []).join(', '),
+                    excludePullRequests: (Array.isArray(review.excludePullRequests) ? review.excludePullRequests : []).join(', ')
+                });
+            } catch (e) {
+                alert("Cannot switch to Filters view: Invalid YAML in Configuration tab.");
+                return;
+            }
+        } else if (activeTab === 'filters' && newTab !== 'filters') {
+            // Sync filters back to YAML
+            try {
+                let parsed = yaml.load(yamlContent);
+                if (!parsed) parsed = {};
+                // yamlContent represents the SPEC, so review is at top level
+                if (!parsed.review) parsed.review = {};
+
+                parsed.review.preferAssignedToSelf = filters.preferAssignedToSelf;
+                parsed.review.labels = filters.labels.filter(g => g.length > 0); // Cleanup empty groups
+                
+                const parseList = (str) => str.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+                parsed.review.pullRequests = parseList(filters.pullRequests);
+                parsed.review.excludePullRequests = parseList(filters.excludePullRequests);
+
+                setYamlContent(yaml.dump(parsed));
+            } catch (e) {
+                console.error("Failed to sync filters to YAML:", e);
+                // Maybe alert?
+            }
+        }
+        setActiveTab(newTab);
+    };
+
     const handleConfigSubmit = async (e) => {
         e.preventDefault();
+        
+        let contentToSubmit = yamlContent;
+        if (activeTab === 'filters') {
+             // If submitting from filters tab, we need to generate YAML first
+             try {
+                let parsed = yaml.load(yamlContent); // Load existing to preserve other fields
+                if (!parsed) parsed = {}; // Should have been loaded initially
+                // yamlContent represents the SPEC, so review is at top level
+                if (!parsed.review) parsed.review = {};
+
+                parsed.review.preferAssignedToSelf = filters.preferAssignedToSelf;
+                parsed.review.labels = filters.labels.filter(g => g.length > 0);
+                
+                const parseList = (str) => str.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+                parsed.review.pullRequests = parseList(filters.pullRequests);
+                parsed.review.excludePullRequests = parseList(filters.excludePullRequests);
+
+                contentToSubmit = yaml.dump(parsed);
+                // Also update state so if we fail we stay in sync? 
+                // Actually handleConfigSubmit usually just submits.
+            } catch (e) {
+                setError("Failed to generate YAML from filters: " + e.message);
+                return;
+            }
+        }
+
         setError('');
         setIsLoading(true);
 
         try {
-            const parsed = yaml.load(yamlContent);
+            const parsed = yaml.load(contentToSubmit);
             if (!parsed) throw new Error("YAML is empty or invalid");
 
             const currentRepoURL = parsed?.repoURL;
@@ -92,7 +174,7 @@ function UpdateRepo({ repo, onCancel, onRepoUpdated, onRepoDeleted }) {
         fetch(`/api/repos/${repo.name}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ yaml: yamlContent })
+            body: JSON.stringify({ yaml: contentToSubmit })
         })
         .then(async (res) => {
             if (!res.ok) {
@@ -109,6 +191,10 @@ function UpdateRepo({ repo, onCancel, onRepoUpdated, onRepoDeleted }) {
         })
         .then(() => {
             setIsLoading(false);
+            if (activeTab === 'filters') {
+                 // Update yamlContent state to match what we just submitted
+                 setYamlContent(contentToSubmit);
+            }
             onRepoUpdated();
         })
         .catch(err => {
@@ -165,13 +251,19 @@ function UpdateRepo({ repo, onCancel, onRepoUpdated, onRepoDeleted }) {
             <div className="repo-tabs" style={{justifyContent: 'flex-start', marginBottom: '20px'}}>
                 <button 
                     className={`tab-btn ${activeTab === 'config' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('config')}
+                    onClick={() => handleTabChange('config')}
                 >
                     Configuration
                 </button>
                 <button 
+                    className={`tab-btn ${activeTab === 'filters' ? 'active' : ''}`}
+                    onClick={() => handleTabChange('filters')}
+                >
+                    Filters
+                </button>
+                <button 
                     className={`tab-btn ${activeTab === 'instructions' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('instructions')}
+                    onClick={() => handleTabChange('instructions')}
                 >
                     User Instructions
                     {hasDraft && <span style={{marginLeft: '5px', color: '#orange'}}>●</span>} 
@@ -193,6 +285,122 @@ function UpdateRepo({ repo, onCancel, onRepoUpdated, onRepoDeleted }) {
                                 disabled={isLoading}
                                 style={{fontFamily: 'monospace', width: '100%', whiteSpace: 'pre'}}
                             />
+                        </div>
+                        <div className="form-actions">
+                            <button type="submit" className="btn btn-submit" disabled={isLoading}>
+                                {isLoading ? 'Updating...' : 'Update Repowatch'}
+                            </button>
+                            <button type="button" className="btn" onClick={onCancel} disabled={isLoading}>
+                                Cancel
+                            </button>
+                        </div>
+                    </form>
+                </>
+            )}
+
+            {activeTab === 'filters' && (
+                <>
+                    {error && <div className="message error">{error}</div>}
+                    <form onSubmit={handleConfigSubmit} className="add-repo-form">
+                        <div className="form-group">
+                             <div style={{marginBottom: '15px'}}>
+                                <label style={{display: 'flex', alignItems: 'center', cursor: 'pointer'}}>
+                                    <input 
+                                        type="checkbox" 
+                                        checked={filters.preferAssignedToSelf} 
+                                        onChange={e => setFilters({...filters, preferAssignedToSelf: e.target.checked})}
+                                        style={{marginRight: '10px'}}
+                                    />
+                                    <strong>Prefer Assigned To Self</strong>
+                                </label>
+                                <p style={{margin: '5px 0 0 25px', fontSize: '0.9em', color: '#666'}}>
+                                    If checked, the agent will prioritize reviewing PRs assigned to the authenticated user (or the bot user).
+                                </p>
+                             </div>
+
+                             <div style={{marginBottom: '20px'}}>
+                                <label>Included Pull Requests (comma separated numbers):</label>
+                                <input 
+                                    type="text" 
+                                    value={filters.pullRequests} 
+                                    onChange={e => setFilters({...filters, pullRequests: e.target.value})}
+                                    placeholder="e.g. 123, 456"
+                                    style={{width: '100%', padding: '8px'}}
+                                />
+                             </div>
+
+                             <div style={{marginBottom: '20px'}}>
+                                <label>Excluded Pull Requests (comma separated numbers):</label>
+                                <input 
+                                    type="text" 
+                                    value={filters.excludePullRequests} 
+                                    onChange={e => setFilters({...filters, excludePullRequests: e.target.value})}
+                                    placeholder="e.g. 789, 101"
+                                    style={{width: '100%', padding: '8px'}}
+                                />
+                             </div>
+
+                             <div style={{marginBottom: '20px'}}>
+                                <label>Label Filters (Groups are OR-ed, Labels within group are AND-ed):</label>
+                                <div style={{background: '#f9f9f9', padding: '15px', borderRadius: '5px', border: '1px solid #ddd'}}>
+                                    {filters.labels.map((group, groupIdx) => (
+                                        <div key={groupIdx} style={{marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '10px'}}>
+                                            <span style={{fontWeight: 'bold'}}>Group {groupIdx + 1}:</span>
+                                            <div style={{display: 'flex', flexWrap: 'wrap', gap: '5px', flex: 1}}>
+                                                {group.map((label, labelIdx) => (
+                                                    <span key={labelIdx} style={{background: '#e1f5fe', padding: '2px 8px', borderRadius: '12px', display: 'flex', alignItems: 'center', fontSize: '0.9em'}}>
+                                                        {label}
+                                                        <span 
+                                                            onClick={() => {
+                                                                const newLabels = [...filters.labels];
+                                                                newLabels[groupIdx] = newLabels[groupIdx].filter((_, i) => i !== labelIdx);
+                                                                setFilters({...filters, labels: newLabels});
+                                                            }}
+                                                            style={{marginLeft: '5px', cursor: 'pointer', fontWeight: 'bold', color: '#888'}}
+                                                        >×</span>
+                                                    </span>
+                                                ))}
+                                                <input 
+                                                    type="text" 
+                                                    placeholder="+ Add Label"
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === 'Enter') {
+                                                            e.preventDefault();
+                                                            const val = e.target.value.trim();
+                                                            if (val) {
+                                                                const newLabels = [...filters.labels];
+                                                                newLabels[groupIdx] = [...newLabels[groupIdx], val];
+                                                                setFilters({...filters, labels: newLabels});
+                                                                e.target.value = '';
+                                                            }
+                                                        }
+                                                    }}
+                                                    style={{border: 'none', background: 'transparent', minWidth: '80px', outline: 'none', borderBottom: '1px solid #ccc'}}
+                                                />
+                                            </div>
+                                            <button 
+                                                type="button" 
+                                                className="btn btn-delete" 
+                                                style={{padding: '2px 8px', fontSize: '0.8em'}}
+                                                onClick={() => {
+                                                    const newLabels = filters.labels.filter((_, i) => i !== groupIdx);
+                                                    setFilters({...filters, labels: newLabels});
+                                                }}
+                                            >
+                                                Remove Group
+                                            </button>
+                                        </div>
+                                    ))}
+                                    <button 
+                                        type="button" 
+                                        className="btn" 
+                                        onClick={() => setFilters({...filters, labels: [...filters.labels, []]})}
+                                        style={{marginTop: '10px', fontSize: '0.9em'}}
+                                    >
+                                        + Add Filter Group
+                                    </button>
+                                </div>
+                             </div>
                         </div>
                         <div className="form-actions">
                             <button type="submit" className="btn btn-submit" disabled={isLoading}>
