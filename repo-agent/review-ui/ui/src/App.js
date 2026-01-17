@@ -867,12 +867,47 @@ function App() {
   const renderContent = () => {
     if (!activeRepo) return <p>Please select or add a repository to watch.</p>;
     const namespace = user || 'default';
+
+    const renderLimitInfo = (items, maxCount) => {
+        if (!maxCount || maxCount <= 0) return null;
+        
+        const activeCount = items.filter(i => i.sandboxReplica !== "0").length;
+        const isLimitReached = activeCount >= maxCount;
+        
+        const style = {
+            padding: '8px 12px',
+            backgroundColor: isLimitReached ? '#fff3cd' : '#e6fffa',
+            color: isLimitReached ? '#856404' : '#2c7a7b',
+            borderRadius: '4px',
+            fontSize: '0.95em',
+            marginBottom: '15px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            border: `1px solid ${isLimitReached ? '#ffeeba' : '#b2f5ea'}`
+        };
+
+        return (
+            <div style={style}>
+                <span>
+                    <strong>Active Sandboxes:</strong> {activeCount} / {maxCount}
+                </span>
+                <span style={{fontSize: '0.9em', opacity: 0.8}}>
+                    (Limit defined in YAML)
+                </span>
+            </div>
+        );
+    };
+
     if (activeSubTab.name === 'review') {
         // 1. Active PRs
         const activeList = [];
         if (prs.length > 0) {
             prs.forEach(pr => activeList.push({ ...pr, type: 'active', sortId: parseInt(pr.id) }));
         }
+
+        const maxActiveSandboxes = activeRepo.review?.maxActiveSandboxes;
+        const limitBadge = renderLimitInfo(activeList, maxActiveSandboxes);
 
         const getPriority = (pr) => {
             const isReviewDraftCreated = pr.reviewState === 'submitted' || !!pr.review;
@@ -955,6 +990,7 @@ function App() {
 
       return (
         <>
+          {limitBadge}
           {activeList.map(renderItem)}
           
           {pendingList.length > 0 && (
@@ -981,6 +1017,9 @@ function App() {
     } else if (activeSubTab.name === 'dev') {
         const activeList = devSandboxes.map(sandbox => ({...sandbox, type: 'active'}));
         
+        const maxActiveSandboxes = activeRepo.dev?.maxActiveSandboxes;
+        const limitBadge = renderLimitInfo(activeList, maxActiveSandboxes);
+
         // Pending Branches
         const pending = activeRepo.pendingDevBranches || [];
         const pendingList = [];
@@ -1032,6 +1071,7 @@ function App() {
 
         const list = activeList.length === 0 && pendingList.length === 0 && excludedList.length === 0 ? <p>No active Dev Sandboxes found.</p> : (
             <>
+                {limitBadge}
                 {activeList.map(renderDevItem)}
                 
                 {pendingList.length > 0 && (
@@ -1072,23 +1112,39 @@ function App() {
             </>
         );
     } else {
-      if (issues.length === 0) return <p>No active Issues found for this handler.</p>;
-      return issues.map(issue => (
-        <IssueCard
-          key={issue.id}
-          issue={issue}
-          drafts={drafts}
-          activeSubTab={activeSubTab}
-          handleIssueDraftChange={handleIssueDraftChange}
-          handleIssueSaveDraft={handleIssueSaveDraft}
-          handleIssueSubmit={handleIssueSubmit}
-          handleIssueDelete={handleIssueDelete}
-          getSandboxStatusClass={getSandboxStatusClass}
-          namespace={namespace}
-          handleScaleUp={handleIssueScaleUp}
-          handleScaleDown={handleIssueScaleDown}
-        />
-      ));
+      const handlerName = activeSubTab.name;
+      const handlerConfig = activeRepo.issueHandlers?.find(h => h.name === handlerName);
+      const maxActiveSandboxes = handlerConfig?.maxActiveSandboxes;
+      const limitBadge = renderLimitInfo(issues, maxActiveSandboxes);
+
+      if (issues.length === 0) return (
+          <>
+             {limitBadge}
+             <p>No active Issues found for this handler.</p>
+          </>
+      );
+
+      return (
+          <>
+            {limitBadge}
+            {issues.map(issue => (
+                <IssueCard
+                key={issue.id}
+                issue={issue}
+                drafts={drafts}
+                activeSubTab={activeSubTab}
+                handleIssueDraftChange={handleIssueDraftChange}
+                handleIssueSaveDraft={handleIssueSaveDraft}
+                handleIssueSubmit={handleIssueSubmit}
+                handleIssueDelete={handleIssueDelete}
+                getSandboxStatusClass={getSandboxStatusClass}
+                namespace={namespace}
+                handleScaleUp={handleIssueScaleUp}
+                handleScaleDown={handleIssueScaleDown}
+                />
+            ))}
+          </>
+      );
     }
   };
 
