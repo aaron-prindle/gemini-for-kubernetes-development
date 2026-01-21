@@ -100,6 +100,7 @@ func TestGemini_Setup(t *testing.T) {
 
 // MockCommandExecutor is a mock implementation of CommandExecutor for testing.
 type MockCommandExecutor struct {
+	Dir     string
 	Command string
 	Args    []string
 	Output  []byte
@@ -107,7 +108,8 @@ type MockCommandExecutor struct {
 	Err     error
 }
 
-func (e *MockCommandExecutor) Run(command string, args ...string) ([]byte, []byte, error) {
+func (e *MockCommandExecutor) Run(dir string, command string, args ...string) ([]byte, []byte, error) {
+	e.Dir = dir
 	e.Command = command
 	e.Args = args
 	return e.Output, e.Stderr, e.Err

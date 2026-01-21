@@ -165,7 +165,7 @@ func (g *Gemini) ExpandPrompt(prompt string) (string, error) {
 func (g *Gemini) Run(agentPrompt string) ([]byte, error) {
 	klog.Info("running gemini")
 
-	stdout, stderr, err := g.Executor.Run("gemini", "-y", "-p", agentPrompt)
+	stdout, stderr, err := g.Executor.Run(g.RepoDir, "gemini", "-y", "-p", agentPrompt)
 	if err != nil {
 		klog.Infof("gemini command failed: %v. Stderr: %s", err, string(stderr))
 		if strings.Contains(string(stderr), "[API Error: You have exhausted your daily quota on this model.]") {
