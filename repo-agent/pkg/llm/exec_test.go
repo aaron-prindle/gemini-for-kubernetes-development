@@ -24,7 +24,7 @@ func TestRealCommandExecutor_Run(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		// This test will fail if `echo` is not in the path
 		executor := &RealCommandExecutor{}
-		stdout, stderr, err := executor.Run("echo", "-n", "hello")
+		stdout, stderr, err := executor.Run("", "echo", "-n", "hello")
 		if err != nil {
 			t.Fatalf("RealCommandExecutor.Run() failed: %v", err)
 		}
@@ -39,7 +39,7 @@ func TestRealCommandExecutor_Run(t *testing.T) {
 	t.Run("error", func(t *testing.T) {
 		// This test will fail if `command-that-does-not-exist` is in the path
 		executor := &RealCommandExecutor{}
-		_, stderr, err := executor.Run("command-that-does-not-exist")
+		_, stderr, err := executor.Run("", "command-that-does-not-exist")
 		if err == nil {
 			t.Fatal("RealCommandExecutor.Run() should have failed, but it didn't")
 		}
@@ -56,7 +56,7 @@ func TestRealCommandExecutor_Run(t *testing.T) {
 	t.Run("stderr", func(t *testing.T) {
 		// This test will fail if `sh` is not in the path
 		executor := &RealCommandExecutor{}
-		stdout, stderr, err := executor.Run("sh", "-c", "echo -n hello >&2")
+		stdout, stderr, err := executor.Run("", "sh", "-c", "echo -n hello >&2")
 		if err != nil {
 			t.Fatalf("RealCommandExecutor.Run() failed: %v", err)
 		}
