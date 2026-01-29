@@ -608,7 +608,7 @@ function PrReviewCard({
       })
       .then(res => {
           if (res.ok) {
-              alert("Review submitted!");
+              alert("Draft Review Submitted!");
               // potentially trigger a refresh or update UI state
           } else {
               res.text().then(t => alert("Failed to submit: " + t));
