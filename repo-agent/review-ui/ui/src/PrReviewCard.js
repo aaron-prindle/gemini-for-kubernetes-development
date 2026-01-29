@@ -20,6 +20,7 @@ function TaskReviewCard({
     handleExportCurl,
     namespace,
     isSubmitted,
+    htmlURL,
     diff,
     diffError,
     fileCollapsed,
@@ -537,7 +538,7 @@ function TaskReviewCard({
                         </button>
                         )}
                         {isSubmitted && (
-                        <a href={`https://github.com/${namespace}/${prId.split('-')[0]}/pull/${prId.split('-')[2]}`} target="_blank" rel="noopener noreferrer" className="btn btn-submit" style={{textDecoration: 'none'}}>
+                        <a href={htmlURL} target="_blank" rel="noopener noreferrer" className="btn btn-submit" style={{textDecoration: 'none'}}>
                             Go to review
                         </a>
                         )}
@@ -811,6 +812,7 @@ function PrReviewCard({
                     handleExportCurl={handleExportCurl}
                     namespace={namespace}
                     isSubmitted={isSubmitted}
+                    htmlURL={pr.htmlURL}
                     diff={diff}
                     diffError={diffError}
                     fileCollapsed={fileCollapsed}
