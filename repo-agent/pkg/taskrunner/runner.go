@@ -120,6 +120,34 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 
 	var cmd *exec.Cmd
 
+	// Helper to inject default cache env vars if not present
+	injectDefaultEnv := func(env []string, includeTmpDir bool) []string {
+		hasGoCache := false
+		hasGoModCache := false
+		hasTmpDir := false
+		for _, e := range env {
+			if strings.HasPrefix(e, "GOCACHE=") {
+				hasGoCache = true
+			}
+			if strings.HasPrefix(e, "GOMODCACHE=") {
+				hasGoModCache = true
+			}
+			if strings.HasPrefix(e, "TMPDIR=") {
+				hasTmpDir = true
+			}
+		}
+		if !hasGoCache {
+			env = append(env, "GOCACHE=/workspaces/.cache/go-build")
+		}
+		if !hasGoModCache {
+			env = append(env, "GOMODCACHE=/workspaces/.cache/mod")
+		}
+		if includeTmpDir && !hasTmpDir {
+			env = append(env, "TMPDIR=/workspaces/.tmp")
+		}
+		return env
+	}
+
 	switch taskType {
 	case "review":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "review")
@@ -132,6 +160,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		for k, v := range params {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
 		}
+		cmd.Env = injectDefaultEnv(cmd.Env, false)
 
 	case "fix-issue":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "github-fix-issue", "--in-pod=true")
@@ -141,6 +170,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		for k, v := range params {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
 		}
+		cmd.Env = injectDefaultEnv(cmd.Env, true)
 
 	case "address-feedback":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "github-feedback", "--in-pod=true")
@@ -150,6 +180,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		for k, v := range params {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
 		}
+		cmd.Env = injectDefaultEnv(cmd.Env, true)
 
 	case "investigate-failures":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "github-investigate", "--in-pod=true")
@@ -159,6 +190,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		for k, v := range params {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
 		}
+		cmd.Env = injectDefaultEnv(cmd.Env, false)
 
 	case "triage-issue":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "github-triage-issue", "--in-pod=true")
@@ -168,6 +200,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		for k, v := range params {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
 		}
+		cmd.Env = injectDefaultEnv(cmd.Env, false)
 
 	case "dev-setup":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "dev-init", "--in-pod=true")
@@ -177,6 +210,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		for k, v := range params {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
 		}
+		cmd.Env = injectDefaultEnv(cmd.Env, false)
 
 	case "iterate":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "iterate", "--in-pod=true")
@@ -186,6 +220,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		for k, v := range params {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
 		}
+		cmd.Env = injectDefaultEnv(cmd.Env, false)
 
 	case "issue":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "dev")
@@ -198,6 +233,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		for k, v := range params {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
 		}
+		cmd.Env = injectDefaultEnv(cmd.Env, false)
 
 	// TODO (barney-s): Pending decision: Should we support script tasks ?
 	case "script":
@@ -208,6 +244,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 			tr.updateTaskStatus(ctx, task, "Failed", "missing 'command' param")
 			return
 		}
+		cmd.Env = injectDefaultEnv(cmd.Env, false)
 
 	default:
 		klog.Warningf("Unknown task type: %s", taskType)
